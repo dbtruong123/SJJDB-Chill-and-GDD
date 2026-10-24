@@ -7,14 +7,20 @@
                           to the nearest station; any station value maps to a point as
                           sum(w_i * value_i), so the page can draw any day or season total
 
-Run after `daily_forecast.py predict` so the forecast rows are current.
+Run after `daily_forecast.py predict` (or `live`) so the forecast rows are current:
+
+    python dashboard_data.py [--hourly FILE]   # same hourly CSV the forecast used
 """
 from __future__ import annotations
+
+import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from baselines import HERE, haversine_km
+from baselines import HERE, daily_from_hourly, haversine_km, load_hourly
+from daily_forecast import DEFAULT_HOURLY
 from map_loso import dist_matrix, kriging_weights
 
 OUT = HERE / "dashboard"
@@ -55,14 +61,20 @@ def weights(grid: pd.DataFrame, stations: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def main():
+def main(argv: list[str] | None = None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--hourly", type=Path, default=DEFAULT_HOURLY,
+                    help="hourly CIMIS CSV for the observed history (live runs: data/live_hourly.csv)")
+    args = ap.parse_args(argv)
     OUT.mkdir(exist_ok=True)
     stations = pd.read_csv(HERE / "data/cimis_stations_selected.csv")
     stations = stations[["station", "name", "latitude", "longitude", "elevation_ft"]].sort_values("station")
     stations.to_csv(OUT / "stations.csv", index=False)
 
-    obs = pd.read_csv(HERE / "data/daily_station.csv", parse_dates=["date"])
+    obs = daily_from_hourly(load_hourly(args.hourly))
     obs = obs[["station", "date", "chill_hours", "chill_portions", "gdd"]].assign(kind="observed")
+    if not (HERE / "forecast_output.csv").exists():
+        raise SystemExit("forecast_output.csv not found: run `python daily_forecast.py predict` (or `live`) first")
     fc = pd.read_csv(HERE / "forecast_output.csv", parse_dates=["target_date"])
     fc = fc.rename(columns={"target_date": "date"})[["station", "date", "chill_hours", "chill_portions", "gdd"]]
     fc = fc.assign(kind="forecast")

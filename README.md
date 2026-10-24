@@ -16,7 +16,8 @@ compares to past years, and what to expect over the next 7 days.
 | `cimis_puller/agro.py` | Chill hours, Utah units, chill portions and GDD from hourly temperatures |
 | `cimis_puller/cimis_pull.py` | CIMIS Web API client |
 | `cimis_puller/pipeline.py` | Builds an ML-ready station dataset from the API |
-| `forecast/daily_forecast.py` | Daily 7-day forecast: `train`, `predict`, `live` |
+| `forecast/daily_forecast.py` | Daily 7-day forecast: `pull`, `train`, `predict`, `live` |
+| `forecast/api.py` | HTTP API for the frontend (see `forecast/API.md`) |
 | `forecast/baselines.py` | Daily totals, persistence and climatology baselines (used by the forecaster) |
 | `forecast/map_loso.py` | Leave-one-station-out test for filling the map between stations |
 | `forecast/dashboard_data.py` | Builds the dashboard's files: daily history + forecast, stations, map grid with kriging weights |
@@ -37,15 +38,26 @@ with the app key in the `Ocp-Apim-Subscription-Key` header.
 
 ```
 cd forecast
+export CIMIS_APP_KEY=...           # never commit this
+python daily_forecast.py pull      # optional: rebuild data/cimis_hourly_<start>_<end>.csv from the API (5 years)
 python daily_forecast.py train     # scores the last year, then refits on all years and saves models/
 python daily_forecast.py predict   # writes forecast_output.csv for the last day in the data
-export CIMIS_APP_KEY=...           # never commit this
 python daily_forecast.py live      # pulls the last 3 weeks from CIMIS and re-forecasts
 python dashboard_data.py           # refreshes dashboard/daily.csv, stations.csv, map_grid.csv
 ```
 
 `forecast_output.csv` has one row per station and forecast day: daily chill hours, chill
 portions and GDD, plus season-to-date totals including the forecast days.
+
+## API for the frontend
+
+```
+cd forecast
+export CIMIS_APP_KEY=...           # optional: pulls fresh readings at start-up and every 6 hours
+uvicorn api:app --port 8000        # needs the trained model; docs at http://127.0.0.1:8000/docs
+```
+
+Endpoints and example responses: `forecast/API.md`.
 
 ## Method
 

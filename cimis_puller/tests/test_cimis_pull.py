@@ -67,3 +67,49 @@ def test_pull_sequential_and_resume(tmp_path):
     c2 = FakeClient()
     cp.pull(c2, 2023, "winter", None, tmp_path, log=lambda *_: None)
     assert c2.calls == []  # already pulled, skipped
+
+
+def test_firewall_page_gives_clear_error():
+    import pytest
+    import requests
+
+    class Page:
+        status_code = 200
+        url = "https://et.water.ca.gov/api/data?appKey=x"
+        text = "<html><head><title>Request Rejected</title></head><body>The requested URL was rejected.</body></html>"
+
+        def json(self):
+            raise requests.exceptions.JSONDecodeError("Expecting value", "", 0)
+
+    class Session:
+        headers = {}
+
+        def get(self, *a, **k):
+            return Page()
+
+    client = cp.CimisClient("k", pause=0, retries=0, session=Session())
+    with pytest.raises(RuntimeError, match="firewall"):
+        client.data(6, date(2026, 10, 20), date(2026, 10, 21), ["hly-air-tmp"])
+
+
+def test_data_uses_current_endpoint_and_header():
+    seen = {}
+
+    class Ok:
+        status_code = 200
+        url = "u"
+
+        def json(self):
+            return {"Data": {"Providers": [{"Records": []}]}}
+
+    class Session:
+        headers = {}
+
+        def get(self, url, params=None, timeout=None):
+            seen.update(url=url, params=params, key=self.headers.get(cp.KEY_HEADER))
+            return Ok()
+
+    cp.CimisClient("k", pause=0, session=Session()).data(6, date(2026, 10, 20), date(2026, 10, 21), ["hly-air-tmp"])
+    assert seen["url"].endswith("/StationWeb/GetDataByStationNumber") and seen["key"] == "k"
+    assert seen["params"]["stationNbrs"] == "6" and seen["params"]["isHourly"] == "true"
+    assert "appKey" not in seen["params"]

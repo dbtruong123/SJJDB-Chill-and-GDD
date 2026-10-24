@@ -130,9 +130,12 @@ def _to_float(s) -> float | None:
         return None
 
 
-def parse_stations(payload: dict) -> list[Station]:
+def parse_stations(payload: dict | list) -> list[Station]:
+    rows = payload.get("Stations") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        raise RuntimeError(f"unrecognised CIMIS station list: {str(payload)[:200]}")
     out = []
-    for s in payload.get("Stations", []):
+    for s in rows:
         out.append(Station(
             number=int(s["StationNbr"]),
             name=s.get("Name", ""),
@@ -192,6 +195,17 @@ def date_chunks(start: date, end: date, records_per_day: int) -> list[tuple[date
     return chunks
 
 
+def _json_or_explain(resp: requests.Response):
+    """CIMIS's firewall answers some requests with an HTML "Request Rejected" page and status 200."""
+    try:
+        return resp.json()
+    except ValueError:
+        text = " ".join(resp.text.split())[:200]
+        hint = (" This is CIMIS's firewall page: the request went to an address it blocks, "
+                "e.g. the old /api/data?appKey=... form." if "rejected" in text.lower() else "")
+        raise RuntimeError(f"CIMIS sent a non-JSON reply from {resp.url.split('?')[0]}: {text!r}.{hint}") from None
+
+
 class CimisClient:
     def __init__(self, app_key: str, pause: float = 1.0, retries: int = 4,
                  timeout: float = 60.0, session: requests.Session | None = None):
@@ -209,7 +223,7 @@ class CimisClient:
             try:
                 resp = self.session.get(url, params=params, timeout=self.timeout)
                 if resp.status_code == 200:
-                    return resp.json()
+                    return _json_or_explain(resp)
                 # 4xx other than rate limiting means a bad request or bad key; don't retry.
                 if 400 <= resp.status_code < 500 and resp.status_code != 429:
                     raise RuntimeError(f"CIMIS {resp.status_code}: {resp.text[:300]}")
@@ -223,7 +237,7 @@ class CimisClient:
         raise AssertionError("unreachable")
 
     def stations(self) -> list[Station]:
-        return parse_stations(self._get("api/station"))
+        return parse_stations(self._get("StationWeb/GetAllStations"))
 
     def data(self, station: int, start: date, end: date, items: list[str],
              unit: str = "M") -> list[dict]:

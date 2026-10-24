@@ -16,6 +16,7 @@ cimis_puller/cimis_pull.py into that same format and forecasts from them, so the
 trained on the file keeps producing current forecasts. Only the last 7 days are needed.
 
 Usage:
+    python daily_forecast.py pull       # build the 5-year hourly CSV from the CIMIS API (CIMIS_APP_KEY) into ../data/
     python daily_forecast.py train      # fit on training years, score the test year, refit on all data, save
     python daily_forecast.py predict [--hourly FILE] [--issue-date YYYY-MM-DD] [--out FILE]
     python daily_forecast.py live       # pull the last 3 weeks from the CIMIS API (CIMIS_APP_KEY), then predict
@@ -232,11 +233,17 @@ def train(args) -> None:
     print(f"saved {MODEL_PATH}", file=sys.stderr)
 
 
-def predict(args) -> None:
-    bundle = joblib.load(MODEL_PATH)
-    stations = pd.read_csv(args.stations)
-    daily = daily_from_hourly(load_hourly(args.hourly))
-    issue = pd.Timestamp(args.issue_date) if args.issue_date else daily.dropna(subset=["gdd"])["date"].max()
+def load_model() -> dict:
+    if not MODEL_PATH.exists():
+        sys.exit(f"{MODEL_PATH} not found: run `python daily_forecast.py train` first")
+    return joblib.load(MODEL_PATH)
+
+
+def forecast_frame(daily: pd.DataFrame, stations: pd.DataFrame, bundle: dict,
+                   issue: pd.Timestamp | None = None) -> pd.DataFrame:
+    """The next 7 days for every station from `issue` (default: last full day), with season-to-date totals."""
+    if issue is None:
+        issue = daily.dropna(subset=["gdd"])["date"].max()
     feats = issue_features(daily[daily["date"] <= issue], stations)
     x = expand_horizons(feats[feats["date"] == issue], bundle["climatology"], None)
     out = predict_frame(bundle["models"], x)
@@ -252,58 +259,107 @@ def predict(args) -> None:
         same = season == agro.season_id(pd.Series([issue]), start).iloc[0]
         out[f"{c}_season_to_date"] = (out["station"].map(so_far).where(same, 0)
                                       + out.groupby(["station", season])[c].cumsum())
+    return out
+
+
+def predict(args) -> None:
+    bundle = load_model()
+    daily = daily_from_hourly(load_hourly(args.hourly))
+    out = forecast_frame(daily, pd.read_csv(args.stations), bundle,
+                         pd.Timestamp(args.issue_date) if args.issue_date else None)
+    issue = out["issue_date"].iloc[0]
     out.to_csv(args.out, index=False, float_format="%.2f")
     print(out.to_string(index=False, float_format="%.1f"))
     print(f"wrote {args.out} (issue date {issue.date()}, model trained through {bundle['trained_through']})",
           file=sys.stderr)
 
 
-def fetch_live(stations: pd.DataFrame, days: int, app_key: str) -> pd.DataFrame:
-    """Last `days` days of hourly air temperature from the CIMIS API, in the uploaded file's format."""
+CHUNK_DAYS = 200  # 200 days x 24 h = 4,800 records, under CIMIS's 5,020-record cap per hourly request
+
+
+def fetch_hourly(stations: pd.DataFrame, start, end, app_key: str) -> pd.DataFrame:
+    """Hourly air temperature from the CIMIS API for start..end, in the uploaded file's format."""
     sys.path.insert(0, str(HERE.parent / "cimis_puller"))
     import cimis_pull as cp
 
     client = cp.CimisClient(app_key)
-    end = pd.Timestamp.now(tz="Etc/GMT+8").date()
-    start = end - pd.Timedelta(days=days)
     rows = []
     for st in stations["station"]:
-        for rec in client.data(int(st), start, end, items=["hly-air-tmp"], unit="M"):
-            rows.append({"station": int(st), "date": rec.get("date"), "hour": rec.get("hour"),
-                         "hly-air-tmp": rec.get("hly_air_tmp"), "hly-air-tmp_qc": rec.get("hly_air_tmp_qc") or None})
-    live = pd.DataFrame(rows)
-    hrs = pd.to_numeric(live["hour"], errors="coerce") // 100  # CIMIS hour 2400 = next day's 00:00
-    live["timestamp_pst"] = pd.to_datetime(live["date"]) + pd.to_timedelta(hrs, unit="h")
-    return live[["station", "timestamp_pst", "hly-air-tmp", "hly-air-tmp_qc"]]
+        a = start
+        while a <= end:
+            b = min(end, a + pd.Timedelta(days=CHUNK_DAYS - 1))
+            for rec in client.data(int(st), a, b, items=["hly-air-tmp"], unit="M"):
+                rows.append({"station": int(st), "date": rec.get("date"), "hour": rec.get("hour"),
+                             "hly-air-tmp": rec.get("hly_air_tmp"),
+                             "hly-air-tmp_qc": rec.get("hly_air_tmp_qc") or None})
+            print(f"station {st}: {a} to {b}", file=sys.stderr)
+            a = b + pd.Timedelta(days=1)
+    if not rows:
+        sys.exit(f"CIMIS returned no hourly readings for {start} to {end}; nothing to forecast from")
+    out = pd.DataFrame(rows)
+    hrs = pd.to_numeric(out["hour"], errors="coerce") // 100  # CIMIS hour 2400 = next day's 00:00
+    out["timestamp_pst"] = pd.to_datetime(out["date"]) + pd.to_timedelta(hrs, unit="h")
+    return out[["station", "timestamp_pst", "hly-air-tmp", "hly-air-tmp_qc"]]
+
+
+def fetch_live(stations: pd.DataFrame, days: int, app_key: str) -> pd.DataFrame:
+    """Last `days` days of hourly air temperature from the CIMIS API."""
+    end = pd.Timestamp.now(tz="Etc/GMT+8").date()
+    return fetch_hourly(stations, end - pd.Timedelta(days=days), end, app_key)
+
+
+def _key(args) -> str:
+    key = args.app_key or os.environ.get("CIMIS_APP_KEY")
+    if not key:
+        sys.exit("set CIMIS_APP_KEY (or pass --app-key) to pull from the CIMIS API")
+    return key
+
+
+def pull(args) -> None:
+    """Build the hourly CSV the forecaster trains on, straight from the CIMIS API."""
+    end = pd.Timestamp(args.end).date() if args.end else pd.Timestamp.now(tz="Etc/GMT+8").date() - pd.Timedelta(days=1)
+    start = pd.Timestamp(args.start).date() if args.start else end - pd.Timedelta(days=5 * 365)
+    path = args.hourly or HERE.parent / "data" / f"cimis_hourly_{start}_{end}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fetch_hourly(pd.read_csv(args.stations), start, end, _key(args)).to_csv(path, index=False)
+    print(f"wrote {path}; train on it with: python daily_forecast.py train --hourly {path}", file=sys.stderr)
+
+
+LIVE_HOURLY = HERE / "data/live_hourly.csv"
+
+
+def merge_live(base: Path, fresh: pd.DataFrame) -> Path:
+    """Fresh readings on top of the archive (so season totals still start at the season start)."""
+    archive = pd.read_csv(base, usecols=fresh.columns.tolist(), parse_dates=["timestamp_pst"])
+    combined = pd.concat([archive, fresh]).drop_duplicates(["station", "timestamp_pst"], keep="last")
+    LIVE_HOURLY.parent.mkdir(parents=True, exist_ok=True)
+    combined.sort_values(["station", "timestamp_pst"]).to_csv(LIVE_HOURLY, index=False)
+    return LIVE_HOURLY
 
 
 def live(args) -> None:
     """Pull the latest weeks from the CIMIS API and forecast from them with the saved model."""
-    key = args.app_key or os.environ.get("CIMIS_APP_KEY")
-    if not key:
-        sys.exit("set CIMIS_APP_KEY (or pass --app-key) to pull live readings")
-    path = HERE / "data/live_hourly.csv"
-    fresh = fetch_live(pd.read_csv(args.stations), args.days, key)
-    # keep the archive underneath so season-to-date totals still start at the season start
-    archive = pd.read_csv(args.hourly, usecols=fresh.columns.tolist(), parse_dates=["timestamp_pst"])
-    combined = pd.concat([archive, fresh]).drop_duplicates(["station", "timestamp_pst"], keep="last")
-    combined.sort_values(["station", "timestamp_pst"]).to_csv(path, index=False)
-    print(f"pulled {len(fresh):,} live readings; archive + live saved to {path}", file=sys.stderr)
-    args.hourly = path
+    fresh = fetch_live(pd.read_csv(args.stations), args.days, _key(args))
+    args.hourly = merge_live(args.hourly, fresh)
+    print(f"pulled {len(fresh):,} live readings; archive + live saved to {args.hourly}", file=sys.stderr)
     predict(args)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["train", "predict", "live"])
-    ap.add_argument("--hourly", type=Path, default=DEFAULT_HOURLY)
+    ap.add_argument("command", choices=["pull", "train", "predict", "live"])
+    ap.add_argument("--hourly", type=Path, help=f"hourly CSV (default: {HOURLY_NAME}; pull: where to write it)")
     ap.add_argument("--stations", type=Path, default=DEFAULT_STATIONS)
     ap.add_argument("--issue-date", help="forecast as of the end of this day (default: last full day in the data)")
     ap.add_argument("--out", type=Path, default=HERE / "forecast_output.csv")
     ap.add_argument("--days", type=int, default=21, help="live: days of recent readings to pull")
-    ap.add_argument("--app-key", help="live: CIMIS app key (default: CIMIS_APP_KEY env var)")
+    ap.add_argument("--app-key", help="pull/live: CIMIS app key (default: CIMIS_APP_KEY env var)")
+    ap.add_argument("--start", help="pull: first day, YYYY-MM-DD (default: 5 years before --end)")
+    ap.add_argument("--end", help="pull: last day, YYYY-MM-DD (default: yesterday)")
     args = ap.parse_args(argv)
-    {"train": train, "predict": predict, "live": live}[args.command](args)
+    if args.command != "pull" and args.hourly is None:
+        args.hourly = DEFAULT_HOURLY
+    {"pull": pull, "train": train, "predict": predict, "live": live}[args.command](args)
     return 0
 
 
