@@ -1,80 +1,70 @@
-# Chill and GDD forecasting for Central Valley orchards
+# Getting Started with Create React App
 
-Answers three grower questions for five CIMIS stations (6 Davis, 70 Manteca, 71 Modesto,
-39 Parlier, 5 Shafter): how much chill and heat has accumulated this season, how that
-compares to past years, and what to expect over the next 7 days.
+This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
-- **Chill hours**: hours between 32 and 45 F
-- **Chill portions**: Dynamic model (UC Davis FNRIC)
-- **GDD**: simple average method, base 50 F
-- Chill seasons reset on Nov 1, GDD on Jan 1
+## Available Scripts
 
-## Layout
+In the project directory, you can run:
 
-| Path | What it does |
-| --- | --- |
-| `cimis_puller/agro.py` | Chill hours, Utah units, chill portions and GDD from hourly temperatures |
-| `cimis_puller/cimis_pull.py` | CIMIS Web API client |
-| `cimis_puller/pipeline.py` | Builds an ML-ready station dataset from the API |
-| `forecast/daily_forecast.py` | Daily 7-day forecast: `pull`, `train`, `predict`, `live` |
-| `forecast/api.py` | HTTP API for the frontend (see `forecast/API.md`) |
-| `forecast/baselines.py` | Daily totals, persistence and climatology baselines (used by the forecaster) |
-| `forecast/map_loso.py` | Leave-one-station-out test for filling the map between stations |
-| `forecast/dashboard_data.py` | Builds the dashboard's files: daily history + forecast, stations, map grid with kriging weights |
-| `forecast/forecast_pull.py` | Optional: archived weather-model forecasts from Open-Meteo |
+### `npm start`
 
-## Setup
+Runs the app in the development mode.\
+Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
-```
-pip install -r requirements.txt
-```
+The page will reload when you make changes.\
+You may also see any lint errors in the console.
 
-The forecaster reads the hourly CIMIS export from `data/cimis_hourly_2021-10-23_2026-10-22.csv`
-(or `forecast/data/`, or any file passed with `--hourly`). Columns used: `station`, `timestamp_pst`,
-`hly-air-tmp` (C), `hly-air-tmp_qc`. `live` calls CIMIS's `StationWeb/GetDataByStationNumber`
-with the app key in the `Ocp-Apim-Subscription-Key` header.
+### `npm test`
 
-## Run
+Launches the test runner in the interactive watch mode.\
+See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
 
-```
-cd forecast
-export CIMIS_APP_KEY=...           # never commit this
-python daily_forecast.py pull      # optional: rebuild data/cimis_hourly_<start>_<end>.csv from the API (5 years)
-python daily_forecast.py train     # scores the last year, then refits on all years and saves models/
-python daily_forecast.py predict   # writes forecast_output.csv for the last day in the data
-python daily_forecast.py live      # pulls the last 3 weeks from CIMIS and re-forecasts
-python dashboard_data.py           # refreshes dashboard/daily.csv, stations.csv, map_grid.csv
-```
+### `npm run build`
 
-`forecast_output.csv` has one row per station and forecast day: daily chill hours, chill
-portions and GDD, plus season-to-date totals including the forecast days.
+Builds the app for production to the `build` folder.\
+It correctly bundles React in production mode and optimizes the build for the best performance.
 
-## API for the frontend
+The build is minified and the filenames include the hashes.\
+Your app is ready to be deployed!
 
-```
-cd forecast
-export CIMIS_APP_KEY=...           # optional: pulls fresh readings at start-up and every 6 hours
-uvicorn api:app --port 8000        # needs the trained model; docs at http://127.0.0.1:8000/docs
-```
+See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
 
-Endpoints and example responses: `forecast/API.md`.
+### `npm run eject`
 
-## Method
+**Note: this is a one-way operation. Once you `eject`, you can't go back!**
 
-For each quantity and each lead day (1 to 7), a gradient-boosting model shared by all five
-stations predicts the departure from that station's normal, using the last week of readings,
-recent temperature trend, the other stations' readings, season timing and location. Each
-day's forecast blends that model with persistence (today's value) and climatology, with blend
-weights chosen on held-out seasons. Near-term days lean on recent readings; later days lean
-on normals.
+If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
 
-## Results (test year Oct 2025 to Oct 2026, mean absolute error per day)
+Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
 
-| | Day 1 | Day 3 | Day 7 |
-| --- | --- | --- | --- |
-| GDD (Mar-Oct) | 2.2 (best baseline 2.4) | 4.1 (4.5) | 4.6 (4.6) |
-| Chill portions (Nov-Feb) | 0.26 (0.42) | 0.37 (0.39) | 0.40 (0.42) |
-| Chill hours (Nov-Feb) | 2.9 (2.8) | 5.2 (4.7) | 6.1 (6.1) |
+You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
 
-Full tables: `forecast/daily_forecast_scores.csv`, `forecast/baseline_scores.csv`,
-`forecast/map_loso_scores.csv`.
+## Learn More
+
+You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+
+To learn React, check out the [React documentation](https://reactjs.org/).
+
+### Code Splitting
+
+This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+
+### Analyzing the Bundle Size
+
+This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+
+### Making a Progressive Web App
+
+This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+
+### Advanced Configuration
+
+This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+
+### Deployment
+
+This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+
+### `npm run build` fails to minify
+
+This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
