@@ -36,7 +36,10 @@ from baselines import HERE, TARGETS, TEST_START, daily_from_hourly, load_hourly
 import agro  # noqa: E402,I001  (importing baselines puts cimis_puller on sys.path)
 
 HORIZONS = range(1, 8)
-DEFAULT_HOURLY = HERE / "data/cimis_hourly_2021-10-23_2026-10-22.csv"
+HOURLY_NAME = "cimis_hourly_2021-10-23_2026-10-22.csv"
+# the team repo keeps the export in the top-level data/ folder; forecast/data/ also works
+DEFAULT_HOURLY = next((p for p in (HERE / "data" / HOURLY_NAME, HERE.parent / "data" / HOURLY_NAME) if p.exists()),
+                      HERE / "data" / HOURLY_NAME)
 DEFAULT_STATIONS = HERE / "data/cimis_stations_selected.csv"
 MODEL_PATH = HERE / "models/daily_forecast.joblib"
 MAX_DAILY = {"chill_hours": 24.0, "chill_portions": np.inf, "gdd": np.inf}
@@ -250,7 +253,7 @@ def predict(args) -> None:
         out[f"{c}_season_to_date"] = (out["station"].map(so_far).where(same, 0)
                                       + out.groupby(["station", season])[c].cumsum())
     out.to_csv(args.out, index=False, float_format="%.2f")
-    print(out.round(1).to_string(index=False))
+    print(out.to_string(index=False, float_format="%.1f"))
     print(f"wrote {args.out} (issue date {issue.date()}, model trained through {bundle['trained_through']})",
           file=sys.stderr)
 

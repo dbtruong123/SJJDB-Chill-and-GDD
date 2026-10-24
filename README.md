@@ -28,8 +28,10 @@ compares to past years, and what to expect over the next 7 days.
 pip install -r requirements.txt
 ```
 
-Put the hourly CIMIS export at `forecast/data/cimis_hourly_2021-10-23_2026-10-22.csv`
-(not committed, 25 MB). Columns used: `station`, `timestamp_pst`, `hly-air-tmp` (C), `hly-air-tmp_qc`.
+The forecaster reads the hourly CIMIS export from `data/cimis_hourly_2021-10-23_2026-10-22.csv`
+(or `forecast/data/`, or any file passed with `--hourly`). Columns used: `station`, `timestamp_pst`,
+`hly-air-tmp` (C), `hly-air-tmp_qc`. `live` calls CIMIS's `StationWeb/GetDataByStationNumber`
+with the app key in the `Ocp-Apim-Subscription-Key` header.
 
 ## Run
 

@@ -24,7 +24,9 @@ from pathlib import Path
 
 import requests
 
-BASE_URL = "https://et.water.ca.gov/api"
+BASE_URL = "https://et.water.ca.gov"
+# Current app keys go in this header; the old /api/data?appKey=... form is firewalled.
+KEY_HEADER = "Ocp-Apim-Subscription-Key"
 
 # Seasons are lists of (year_offset, month). Offset -1 means "previous calendar
 # year", so winter 2023 = Dec 2022, Jan 2023, Feb 2023 (meteorological
@@ -52,8 +54,9 @@ HOURLY_ITEMS = [
     "hly-precip", "hly-eto", "hly-asce-eto",
 ]
 
-# CIMIS caps a single request at 1,750 records (one record = one station-day,
-# or one station-hour for hourly data). Requests are chunked to stay under it.
+# CIMIS caps a single request by records (one record = one station-day, or one
+# station-hour for hourly data); hourly tops out at 5,020. Requests are chunked
+# well under that.
 MAX_RECORDS = 1750
 
 
@@ -197,7 +200,7 @@ class CimisClient:
         self.retries = retries
         self.timeout = timeout
         self.session = session or requests.Session()
-        self.session.headers.update({"Accept": "application/json"})
+        self.session.headers.update({"Accept": "application/json", KEY_HEADER: app_key})
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{BASE_URL}/{path}"
@@ -220,19 +223,19 @@ class CimisClient:
         raise AssertionError("unreachable")
 
     def stations(self) -> list[Station]:
-        return parse_stations(self._get("station"))
+        return parse_stations(self._get("api/station"))
 
     def data(self, station: int, start: date, end: date, items: list[str],
              unit: str = "M") -> list[dict]:
         params = {
-            "appKey": self.app_key,
-            "targets": str(station),
+            "stationNbrs": str(station),
             "startDate": start.isoformat(),
             "endDate": end.isoformat(),
+            "isHourly": str(items[0].startswith("hly-")).lower(),
             "dataItems": ",".join(items),
             "unitOfMeasure": unit,
         }
-        payload = self._get("data", params)
+        payload = self._get("StationWeb/GetDataByStationNumber", params)
         time.sleep(self.pause)
         return flatten_records(payload)
 
